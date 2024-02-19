@@ -23,7 +23,8 @@ import platform
 import uuid
 
 from rez.utils.platform_ import platform_
-
+from rez.util import which
+from rez.utils.execution import Popen
 
 is_windows = platform.system() == "Windows"
 
@@ -213,6 +214,7 @@ def forceful_rmtree(path):
         * path length over 259 char (on Windows)
         * unicode path
     """
+
     def _on_error(func, path, exc_info):
         try:
             if is_windows:
@@ -281,7 +283,7 @@ def replace_file_or_dir(dest, source):
 
     if not os.path.exists(dest):
         try:
-            os.rename(source, dest)
+            rename(source, dest)
             return
         except:
             if not os.path.exists(dest):
@@ -294,8 +296,8 @@ def replace_file_or_dir(dest, source):
         pass
 
     with make_tmp_name(dest) as tmp_dest:
-        os.rename(dest, tmp_dest)
-        os.rename(source, dest)
+        rename(dest, tmp_dest)
+        rename(source, dest)
 
 
 def additive_copytree(src, dst, symlinks=False, ignore=None):
@@ -690,3 +692,47 @@ def windows_long_path(dos_path):
         path = "\\\\?\\" + path
 
     return path
+
+
+def rename(src, dst):
+    """Utility functions to rename a file or folder src to dst with retrying.
+
+     ``os.rename()`` frequently raises “Access is denied” exception on Windows.
+    This function renames file or folder using robocopy to avoid the exception on Windows.
+
+    References:
+        - https://github.com/conan-io/conan/blob/develop2/conan/tools/files/files.py#L207
+
+    """
+    if is_windows and which("robocopy") and os.path.isdir(src):
+        # https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/robocopy
+        args = [
+            "robocopy",
+            # /move Moves files and directories, and deletes them from the source after they are copied.
+            "/move",
+            # /e Copies subdirectories. Note that this option includes empty directories.
+            "/e",
+            # /ndl Specifies that directory names are not to be logged.
+            "/ndl",
+            # /nfl Specifies that file names are not to be logged.
+            "/nfl",
+            # /njs Specifies that there's no job summary.
+            "/njs",
+            # /njh Specifies that there's no job header.
+            "/njh",
+            # /np Specifies that the progress of the copying operation
+            # (the number of files or directories copied so far) won't be displayed.
+            "/np",
+            # /ns Specifies that file sizes aren't to be logged.
+            "/ns",
+            # /nc Specifies that file classes aren't to be logged.
+            "/nc",
+            src,
+            dst,
+        ]
+        process = Popen(args)
+        process.communicate()
+        if process.returncode > 7:  # https://ss64.com/nt/robocopy-exit.html
+            raise OSError("rename {} to {} failed.".format(src, dst))
+    else:
+        os.rename(src, dst)
